@@ -1,0 +1,6 @@
+dump_demo/*
+data/*
+model_files/*
+examples/*
+*.pyc
+testing_data/*

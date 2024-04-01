@@ -18,6 +18,10 @@ from propose.utils.render import SMPLRenderer
 from propose.utils.vis import vis_vertices
 from propose.utils.wrapper import SMPL3DCamWrapper
 
+import pickle
+from pathlib import Path
+from propose.wrappers.poseout_process import ProPoseOutputPostProcess
+
 
 def main_worker(opt, cfg):
     #----------------------------- Transformation -----------------------------#
@@ -54,7 +58,7 @@ def main_worker(opt, cfg):
     hmr_model.eval()
 
     #----------------------------- Data -----------------------------#
-    files = os.listdir(opt.img_dir)
+    files = sorted(os.listdir(opt.img_dir))
 
     if not os.path.exists(opt.out_dir):
         os.makedirs(opt.out_dir)
@@ -77,7 +81,7 @@ def main_worker(opt, cfg):
         det_output = det_model([det_input])[0]
 
         image_vis = input_image.copy()
-        img_size = (image_vis.shape[0], image_vis.shape[1])
+        img_size = (image_vis.shape[0], image_vis.shape[1]) # rows, column ( height, widht)
 
         if opt.mode == 'single':
             tight_bboxes = [get_one_box(det_output)]  # xyxy
@@ -140,6 +144,27 @@ def main_worker(opt, cfg):
         image_vis = cv2.cvtColor(image_vis, cv2.COLOR_RGB2BGR)
 
         cv2.imwrite(res_path, image_vis)
+
+        
+        def to_world(focal_length, bbox_center, img_size, transl):
+            h, w = img_size #row, column
+            K = np.array([[focal_length, 0, w/2],
+                [0, focal_length, h/2],
+                [0, 0, 1]])  # Intrinsic matrix
+            K_inv = np.linalg.inv(K)
+            Z = transl[0, 2]
+            world = Z * np.dot(K_inv, (bbox_center[0], bbox_center[1], 1))
+            world[:2] = world[:2] + transl[0, :2] # bbox center world coord + hip joint world coord
+            return world
+        
+        world = to_world(focal_length, princpt, img_size, transl) # princpt is actually the bbox center
+        world = torch.from_numpy(world).reshape(1,1,3).to(pose_output['transl'])
+        pose_output['transl'] = world
+        
+        postprocess = ProPoseOutputPostProcess(pose_output)
+        postprocess.to_obj(Path(res_path).with_suffix(".obj").as_posix())
+        with open(Path(res_path).with_suffix(".pkl").as_posix(), "wb") as f:
+            pickle.dump(postprocess.to_smpl_pose_params(), f)
 
 
 if __name__ == "__main__":

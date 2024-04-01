@@ -44,7 +44,7 @@ class MFHeatmapXYZ(nn.Module):
                               (25, 26), (27, 28), (29, 32), (30, 33), (31, 34)]
         
         X_regressor = np.load('./model_files/smpl/J_regressor_h36m.npy')
-        self.smpl = SMPL_layer(
+        self.smpl: SMPL_layer = SMPL_layer(
             './model_files/smpl/SMPL_NEUTRAL.pkl', 
             X_regressor=X_regressor, dtype=self.smpl_dtype, use_kid=self.use_kid
         )
