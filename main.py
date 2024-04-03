@@ -14,7 +14,6 @@ from tqdm import tqdm
 from propose.models import builder
 from propose.utils.bbox import bbox_xyxy_to_xywh, get_one_box
 from propose.utils.config import update_config
-from propose.utils.render import SMPLRenderer
 from propose.utils.vis import vis_vertices
 from propose.utils.wrapper import SMPL3DCamWrapper
 
@@ -22,6 +21,16 @@ import pickle
 from pathlib import Path
 from propose.wrappers.poseout_process import ProPoseOutputPostProcess
 
+def to_world(focal_length, bbox_center, img_size, transl):
+    h, w = img_size #row, column
+    K = np.array([[focal_length, 0, w/2],
+        [0, focal_length, h/2],
+        [0, 0, 1]])  # Intrinsic matrix
+    K_inv = np.linalg.inv(K)
+    Z = transl[0, 2]
+    world = Z * np.dot(K_inv, (bbox_center[0], bbox_center[1], 1))
+    world[:2] = world[:2] + transl[0, :2] # bbox center world coord + hip joint world coord
+    return world
 
 def main_worker(opt, cfg):
     #----------------------------- Transformation -----------------------------#
@@ -126,36 +135,27 @@ def main_worker(opt, cfg):
             transl[..., 2] = transl[..., 2] * inp_width / bbox[2]
             transl_batch.append(transl)
 
-        # plot person according to the depth order (far to near)      
-        depth_batch = np.concatenate(transl_batch).reshape(-1, 3)[:, 2]
-        depth_order = np.argsort(-depth_batch, axis=0)
+        if opt.draw:
+            from propose.utils.render import SMPLRenderer
 
-        for ib in depth_order:
-            princpt = princpt_batch[ib]
-            transl = transl_batch[ib]
+            # plot person according to the depth order (far to near)      
+            depth_batch = np.concatenate(transl_batch).reshape(-1, 3)[:, 2]
+            depth_order = np.argsort(-depth_batch, axis=0)
 
-            renderer = SMPLRenderer(faces=hmr_model.smpl.faces,
-                                    img_size=img_size, focal=focal, princpt=princpt)
+            for ib in depth_order:
+                princpt = princpt_batch[ib]
+                transl = transl_batch[ib]
 
-            vertices = pose_output.pred_vertices.reshape(num_person, -1, 6890, 3)[ib, 0].cpu().numpy()
-            vert_shifted = vertices + transl.reshape(1, 3)
-            image_vis = vis_vertices(vert_shifted, renderer=renderer, c=princpt, img=image_vis, color_id=0)
+                renderer = SMPLRenderer(faces=hmr_model.smpl.faces,
+                                        img_size=img_size, focal=focal, princpt=princpt)
 
-        image_vis = cv2.cvtColor(image_vis, cv2.COLOR_RGB2BGR)
+                vertices = pose_output.pred_vertices.reshape(num_person, -1, 6890, 3)[ib, 0].cpu().numpy()
+                vert_shifted = vertices + transl.reshape(1, 3)
+                image_vis = vis_vertices(vert_shifted, renderer=renderer, c=princpt, img=image_vis, color_id=0)
 
-        cv2.imwrite(res_path, image_vis)
+            image_vis = cv2.cvtColor(image_vis, cv2.COLOR_RGB2BGR)
 
-        
-        def to_world(focal_length, bbox_center, img_size, transl):
-            h, w = img_size #row, column
-            K = np.array([[focal_length, 0, w/2],
-                [0, focal_length, h/2],
-                [0, 0, 1]])  # Intrinsic matrix
-            K_inv = np.linalg.inv(K)
-            Z = transl[0, 2]
-            world = Z * np.dot(K_inv, (bbox_center[0], bbox_center[1], 1))
-            world[:2] = world[:2] + transl[0, :2] # bbox center world coord + hip joint world coord
-            return world
+            cv2.imwrite(res_path, image_vis)
         
         world = to_world(focal_length, princpt, img_size, transl) # princpt is actually the bbox center
         world = torch.from_numpy(world).reshape(1,1,3).to(pose_output['transl'])
@@ -164,7 +164,7 @@ def main_worker(opt, cfg):
         postprocess = ProPoseOutputPostProcess(pose_output)
         postprocess.to_obj(Path(res_path).with_suffix(".obj").as_posix())
         with open(Path(res_path).with_suffix(".pkl").as_posix(), "wb") as f:
-            pickle.dump(postprocess.to_smpl_pose_params(), f)
+            pickle.dump(pose_output, f)
 
 
 if __name__ == "__main__":
@@ -180,6 +180,7 @@ if __name__ == "__main__":
                         help='checkpoint path')
     parser.add_argument('--mode', default='single', type=str, choices=['single', 'multi'],
                         help='detect single person or multiple people')
+    parser.add_argument('--draw', default=False, action="store_true")
     opt = parser.parse_args()
 
     cfg_file = 'configs/smpl_hm_xyz.yaml'

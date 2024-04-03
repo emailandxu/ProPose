@@ -1,9 +1,9 @@
+videoname?=default
 run:
 	# python -m debugpy --wait-for-client --listen 5678 \
 	python \
-	scripts/demo.py \
-	--img-dir ./testing_data/daiqin/images \
-	--out-dir ./testing_data/daiqin/output \
+	main.py \
+	--img-dir ./testing_data/$(videoname)/images \
+	--out-dir ./testing_data/$(videoname)/output \
 	--ckpt './model_files/propose_hr48_xyz.pth'
-clean:
-	rm -rf dump_demo
+	python postprocess.py $(videoname) ./testing_data/$(videoname)/output ./testing_data/output/
